@@ -22,102 +22,81 @@ import {
   ChevronRight,
   RefreshCw,
   Zap,
-  Info
+  Info,
+  User,
+  Lock,
+  LogOut,
+  Camera,
+  Check,
+  Award
 } from 'lucide-react';
 import { generateSaveMePlan, askSaveMeAI, GEMINI_MODELS } from './gemini';
+import {
+  registerUser,
+  loginUser,
+  logoutUser,
+  subscribeToAuthChanges,
+  updateUserProfile,
+  isFirebaseConfigured
+} from './firebase';
+
+// Gorgeous built-in avatar options
+const AVATARS = [
+  { id: 'av-pink', value: 'linear-gradient(135deg, #ec4899, #f43f5e)', label: 'Rose Gold' },
+  { id: 'av-purple', value: 'linear-gradient(135deg, #8b5cf6, #6366f1)', label: 'Neon Indigo' },
+  { id: 'av-emerald', value: 'linear-gradient(135deg, #10b981, #059669)', label: 'Mint Glow' },
+  { id: 'av-amber', value: 'linear-gradient(135deg, #f59e0b, #d97706)', label: 'Solar Amber' }
+];
 
 function App() {
-  // --- STATE ---
-  // Server & Model Settings
+  // --- USER AUTH STATE ---
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup' | 'verify'
+  const [authEmail, setAuthEmail] = useState('');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0].value);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [sentCode, setSentCode] = useState('');
+  const [showProfilePanel, setShowProfilePanel] = useState(false);
+
+  // User Profile Editing States
+  const [tempUsername, setTempUsername] = useState('');
+  const [tempBio, setTempBio] = useState('');
+  const [tempAvatar, setTempAvatar] = useState('');
+
+  // --- SETTINGS STATE ---
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('v2s_model') || 'gemini-2.5-flash');
   const [showSettings, setShowSettings] = useState(false);
-  const [serverOnline, setServerOnline] = useState(true);
 
   // Time & Clock
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Tasks Database
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem('v2s_tasks');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return [
-      {
-        id: 'task-demo-1',
-        title: 'Draft Slide Deck for VC Meeting',
-        category: 'Work',
-        priority: 'High',
-        deadline: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString(), // 5.5 hours from now
-        estHours: 3.5,
-        status: 'pending',
-        subtasks: [
-          {
-            id: 'sub-1',
-            title: 'Outline the narrative & structure (10-12 slides)',
-            durationMinutes: 45,
-            completed: false,
-            helperPrompt: 'Draft an outline for a VC pitch deck for a startup building AI productivity companions.',
-            snippet: 'Slide 1: Title & Hook\nSlide 2: The Problem (Deadline stress)\nSlide 3: The Solution (SaveMe AI)\nSlide 4: Product Experience\nSlide 5: Architecture\nSlide 6: Ask'
-          },
-          {
-            id: 'sub-2',
-            title: 'Write content for Problem and Solution slides',
-            durationMinutes: 60,
-            completed: false,
-            helperPrompt: 'Write a compelling problem statement about deadline panic and procrastination.',
-            snippet: 'PROBLEM:\n- Reminders are passive. Users ignore notifications.\n- Overwhelm makes it hard to take the first step.'
-          },
-          {
-            id: 'sub-3',
-            title: 'Compile financial metrics & core numbers',
-            durationMinutes: 45,
-            completed: false,
-            helperPrompt: 'Suggest standard financial projections and key metrics for an early stage SaaS startup.',
-            snippet: '- MRR Growth: 15% MoM\n- LTV/CAC: 3.5x\n- Target Breakeven: 12 months'
-          },
-          {
-            id: 'sub-4',
-            title: 'Format design (use uniform dark-theme template)',
-            durationMinutes: 40,
-            completed: false,
-            helperPrompt: 'Give me 5 formatting and design guidelines for a clean pitch presentation.',
-            snippet: '1. Dark Slate background\n2. Violet accent color\n3. High-contrast large text\n4. Zero paragraphs, bullet points only'
-          }
-        ],
-        scopeCutRecommendations: [
-          "Skip custom transitions and complex slide animations (saves 40 mins).",
-          "Remove team slide bio details; summarize with clean bullet points (saves 20 mins).",
-          "Postpone the financial appendix slides; focus only on core revenue model (saves 30 mins)."
-        ],
-        extensionEmailDraft: `Subject: VC Presentation Prep Update
-
-Hi Team,
-
-I'm currently polishing the slides for our VC meeting. 
-
-To ensure the financial forecasts and product demo screenshots are perfectly accurate, I would appreciate an extra 12 hours. I will send the finalized deck over by tomorrow morning.
-
-Thank you for your flexibility,
-[Your Name]`,
-        stressScore: 63
-      }
-    ];
-  });
+  // Tasks Database (Dynamically loaded based on currentUser)
+  const [tasks, setTasks] = useState([]);
 
   // Task Creator Inputs
   const [taskTitle, setTaskTitle] = useState('');
   const [taskCategory, setTaskCategory] = useState('Work');
   const [taskPriority, setTaskPriority] = useState('Medium');
-  const [deadlineHours, setDeadlineHours] = useState('4');
+  
+  // Default deadline states
+  const getDefaultDate = () => {
+    const d = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const getDefaultTime = () => {
+    const d = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [taskDate, setTaskDate] = useState(getDefaultDate);
+  const [taskTime, setTaskTime] = useState(getDefaultTime);
   const [estWorkHours, setEstWorkHours] = useState('2');
 
   // Interactive Focus States
-  const [selectedTaskId, setSelectedTaskId] = useState('task-demo-1');
+  const [selectedTaskId, setSelectedTaskId] = useState('');
   const [activeSubtaskIndex, setActiveSubtaskIndex] = useState(0);
   const [focusTimeLeft, setFocusTimeLeft] = useState(0); // in seconds
   const [focusIsRunning, setFocusIsRunning] = useState(false);
@@ -176,7 +155,6 @@ Thank you for your flexibility,
   const activeVibe = manualVibe || computedVibe;
   const activeStress = activeTask ? computedStress : 0;
 
-  // Vibe feedback descriptions
   const getVibeConfig = (vibe) => {
     switch (vibe) {
       case 'chill':
@@ -220,16 +198,105 @@ Thank you for your flexibility,
   const vibeConfig = getVibeConfig(activeVibe);
 
   // --- EFFECTS ---
-  // Save settings & tasks
+  // Save settings
   useEffect(() => {
     localStorage.setItem('v2s_model', selectedModel);
   }, [selectedModel]);
 
+  // Subscribe to Auth State (Firebase or Local Mock)
   useEffect(() => {
-    localStorage.setItem('v2s_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    const unsubscribe = subscribeToAuthChanges((user) => {
+      if (user) {
+        // Load additional user meta locally if stored
+        const localMeta = JSON.parse(localStorage.getItem(`v2s_user_metadata_${user.email}`) || '{}');
+        setCurrentUser({
+          ...user,
+          bio: user.bio || localMeta.bio || "Productive Vibe2Ship user."
+        });
+      } else {
+        setCurrentUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
-  // Clock tick & simple backend check
+  // Sync tasks when tasks change (isolated by user email)
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem(`v2s_tasks_${currentUser.email}`, JSON.stringify(tasks));
+    }
+  }, [tasks, currentUser]);
+
+  // Load tasks when currentUser changes (Login / Logout / Switch)
+  useEffect(() => {
+    if (currentUser) {
+      const savedTasks = localStorage.getItem(`v2s_tasks_${currentUser.email}`);
+      if (savedTasks) {
+        try {
+          const parsed = JSON.parse(savedTasks);
+          setTasks(parsed);
+          if (parsed.length > 0) {
+            setSelectedTaskId(parsed[0].id);
+          } else {
+            setSelectedTaskId('');
+          }
+        } catch (e) {
+          console.error(e);
+          setTasks([]);
+          setSelectedTaskId('');
+        }
+      } else {
+        // Load default tasks on initial account setup
+        const initialTasks = [
+          {
+            id: `task-demo-${currentUser.uid}`,
+            title: 'Draft VC Pitch Presentation',
+            category: 'Work',
+            priority: 'High',
+            deadline: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString(),
+            estHours: 3.5,
+            status: 'pending',
+            subtasks: [
+              {
+                id: 'sub-1',
+                title: 'Outline the narrative & structure (10-12 slides)',
+                durationMinutes: 45,
+                completed: false,
+                helperPrompt: 'Draft an outline for a VC pitch deck for a startup building AI productivity companions.',
+                snippet: 'Slide 1: Hook\nSlide 2: Problem\nSlide 3: Solution\nSlide 4: Market Size\nSlide 5: Architecture'
+              },
+              {
+                id: 'sub-2',
+                title: 'Write content for Problem and Solution slides',
+                durationMinutes: 60,
+                completed: false,
+                helperPrompt: 'Write a compelling problem statement about deadline panic and procrastination.',
+                snippet: 'PROBLEM:\n- Passives reminder apps are ignored.\n- Procrastination locks people out of beginning.'
+              }
+            ],
+            scopeCutRecommendations: [
+              "Skip custom slide transitions (saves 40 mins).",
+              "Minimize competitor slide slides (saves 20 mins)."
+            ],
+            extensionEmailDraft: `Subject: VC Presentation Prep Update\n\nHi Team,\n\nI'm polishing the pitch slides. To make sure the forecasting metrics are exact, I request an extra 12 hours.\n\nWarm regards,\n${currentUser.displayName}`,
+            stressScore: 50
+          }
+        ];
+        setTasks(initialTasks);
+        setSelectedTaskId(initialTasks[0].id);
+      }
+      // Populate temp editing details
+      setTempUsername(currentUser.displayName || '');
+      setTempBio(currentUser.bio || 'Productive Vibe2Ship user.');
+      setTempAvatar(currentUser.photoURL || AVATARS[0].value);
+    } else {
+      setTasks([]);
+      setSelectedTaskId('');
+    }
+    setActiveSubtaskIndex(0);
+  }, [currentUser]);
+
+  // Clock tick
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
@@ -252,7 +319,7 @@ Thank you for your flexibility,
       timerRef.current = setInterval(() => {
         setFocusTimeLeft((prev) => {
           if (prev <= 1) {
-            // Audio alert chime
+            // Audio chime
             try {
               const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
               const oscillator = audioCtx.createOscillator();
@@ -268,11 +335,10 @@ Thank you for your flexibility,
               console.log("Audio chime error:", e);
             }
 
-            // Mark subtask as complete
             handleToggleSubtask(selectedTaskId, activeSubtaskIndex, true);
             setFocusIsRunning(false);
             clearInterval(timerRef.current);
-            alert(`Step complete! Nice job. Take a quick breath and proceed.`);
+            alert(`Step complete! Good job, ${currentUser?.displayName}. Focus block completed.`);
             return 0;
           }
           return prev - 1;
@@ -281,7 +347,6 @@ Thank you for your flexibility,
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
-
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -299,7 +364,118 @@ Thank you for your flexibility,
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
-  // --- ACTIONS ---
+  // --- AUTH ACTIONS ---
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    if (authMode === 'login') {
+      try {
+        const user = await loginUser(authEmail, authPassword);
+        
+        if (!isFirebaseConfigured) {
+          // Local storage mock needs a mock verification step
+          generateCodeAndVerify(user);
+        } else {
+          // Real Firebase automatically updates state via subscribeToAuthChanges
+          setCurrentUser(user);
+          setChatMessages([
+            { sender: 'ai', text: `Welcome back, ${user.displayName}! Ready to beat some deadlines? Let's check your active focus plan.` }
+          ]);
+        }
+      } catch (err) {
+        console.error(err);
+        let errMsg = "Failed to sign in. Please verify your credentials.";
+        if (err.code === 'auth/invalid-credential' || err.message.includes('credential')) {
+          errMsg = "Invalid email or password combination.";
+        }
+        alert(errMsg);
+      }
+    } else if (authMode === 'signup') {
+      try {
+        const user = await registerUser(authEmail, authPassword, authUsername, selectedAvatar);
+        
+        if (!isFirebaseConfigured) {
+          // Local storage mock verification step
+          generateCodeAndVerify(user);
+        } else {
+          alert(`🎉 Registration Successful!\n\nReal verification email sent to ${authEmail}.\n\nPlease click the activation link in your email and log in.`);
+          setAuthMode('login');
+        }
+      } catch (err) {
+        console.error(err);
+        let errMsg = err.message;
+        if (err.code === 'auth/email-already-in-use' || err.message.includes('already')) {
+          errMsg = "This email is already registered.";
+        } else if (err.code === 'auth/weak-password') {
+          errMsg = "Password is too weak. Must be at least 6 characters.";
+        }
+        alert(errMsg);
+      }
+    }
+  };
+
+  const generateCodeAndVerify = (userObj) => {
+    const code = Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit pin
+    setSentCode(code);
+    setAuthMode('verify');
+    
+    console.log(`[Vibe2Ship Verification] Mock Email to ${userObj.email}: Verification pin is: ${code}`);
+    alert(`✉️ [Local Demo: Verification Code Sent!]\nWe've sent a 4-digit activation PIN to your registered email.\n\n👉 Verification Code: ${code}`);
+  };
+
+  const handleVerifySubmit = (e) => {
+    e.preventDefault();
+    if (verificationCode === sentCode) {
+      // Mark verified locally
+      const registry = JSON.parse(localStorage.getItem('v2s_users_db') || '[]');
+      const updatedUsers = registry.map(u => {
+        if (u.email === authEmail) {
+          return { ...u, emailVerified: true };
+        }
+        return u;
+      });
+      localStorage.setItem('v2s_users_db', JSON.stringify(updatedUsers));
+      
+      const verifiedUser = updatedUsers.find(u => u.email === authEmail);
+      setCurrentUser(verifiedUser);
+      localStorage.setItem('v2s_current_user', JSON.stringify(verifiedUser));
+      setAuthMode('login');
+      setVerificationCode('');
+    } else {
+      alert("Incorrect verification code. Please check console or try resending.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch (e) {
+      console.warn("Firebase signout error:", e);
+    }
+    setCurrentUser(null);
+    localStorage.removeItem('v2s_current_user');
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthUsername('');
+    setShowProfilePanel(false);
+  };
+
+  // Profile Customization Save
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    try {
+      const updatedUser = await updateUserProfile(tempUsername, tempBio, tempAvatar, currentUser);
+      setCurrentUser(updatedUser);
+      setShowProfilePanel(false);
+      alert("Profile details updated successfully!");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update profile details: " + err.message);
+    }
+  };
+
+  // --- DASHBOARD ACTIONS ---
   // Create Plan Action
   const handleCreateTask = async (e) => {
     e.preventDefault();
@@ -307,9 +483,10 @@ Thank you for your flexibility,
 
     setLoadingPlan(true);
     const newTaskId = `task-${Date.now()}`;
-    const deadlineDate = new Date(Date.now() + parseFloat(deadlineHours) * 60 * 60 * 1000);
+    const deadlineDate = new Date(`${taskDate}T${taskTime}`);
+    const msLeft = deadlineDate.getTime() - Date.now();
+    const hoursLeft = Math.max(0.5, msLeft / (1000 * 60 * 60));
     
-    // Add temporary task skeleton
     const skeletonTask = {
       id: newTaskId,
       title: taskTitle,
@@ -329,11 +506,10 @@ Thank you for your flexibility,
     setActiveSubtaskIndex(0);
 
     try {
-      // Call secure server proxy helper
       const result = await generateSaveMePlan(
         taskTitle,
         taskCategory,
-        parseFloat(deadlineHours),
+        hoursLeft,
         selectedModel
       );
 
@@ -356,13 +532,11 @@ Thank you for your flexibility,
         return t;
       }));
 
-      // Add feedback to chat
       setChatMessages(prev => [
         ...prev,
-        { sender: 'ai', text: `🚀 I've broken down "${taskTitle}" into ${result.subtasks.length} actionable steps. We have a focus plan ready to execute. Let's start with Step 1!` }
+        { sender: 'ai', text: `🚀 Plan ready! I've broken down "${taskTitle}" into ${result.subtasks.length} subtasks. Click 'Focus Now' in the player when you are ready to begin step 1.` }
       ]);
 
-      // Reset Form fields
       setTaskTitle('');
     } catch (err) {
       console.error(err);
@@ -425,7 +599,7 @@ Thank you for your flexibility,
     ]);
   };
 
-  // Copy helper prompt to clipboard
+  // Copy helpers
   const handleCopyText = (text, statusSetter) => {
     navigator.clipboard.writeText(text);
     statusSetter(true);
@@ -479,10 +653,6 @@ Thank you for your flexibility,
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const activeTaskProgress = activeTask && activeTask.subtasks.length > 0
-    ? Math.round((activeTask.subtasks.filter(s => s.completed).length / activeTask.subtasks.length) * 100)
-    : 0;
-
   // Timeline hours generator
   const getTimelineFlow = () => {
     if (!activeTask || !activeTask.subtasks) return [];
@@ -508,6 +678,183 @@ Thank you for your flexibility,
   const [copiedPromptId, setCopiedPromptId] = useState('');
   const [copiedEmail, setCopiedEmail] = useState(false);
 
+  // IF USER IS NOT LOGGED IN, RENDER AUTH CARD PORTAL
+  if (!currentUser) {
+    return (
+      <main style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: '80vh', padding: '20px' }}>
+        <section className="auth-card" id="auth-panel-container">
+          <div className="brand-section" style={{ justifyContent: 'center', marginBottom: '24px' }}>
+            <div className="logo-icon">
+              <Zap size={20} />
+            </div>
+            <div>
+              <h1 className="brand-name" style={{ fontSize: '24px', margin: 0 }}>Vibe2Ship</h1>
+              <div className="tagline">The Last-Minute Life Saver</div>
+            </div>
+          </div>
+
+          {authMode !== 'verify' ? (
+            <>
+              <div className="auth-tabs">
+                <button
+                  type="button"
+                  className={`auth-tab-btn ${authMode === 'login' ? 'active' : ''}`}
+                  onClick={() => setAuthMode('login')}
+                >
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  className={`auth-tab-btn ${authMode === 'signup' ? 'active' : ''}`}
+                  onClick={() => setAuthMode('signup')}
+                >
+                  Register
+                </button>
+              </div>
+
+              <form className="task-creator-form" onSubmit={handleAuthSubmit} style={{ marginTop: '20px' }}>
+                {authMode === 'signup' && (
+                  <div>
+                    <label htmlFor="auth-username-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                      Username
+                    </label>
+                    <div className="input-with-icon">
+                      <User className="input-icon" size={14} />
+                      <input
+                        id="auth-username-input"
+                        type="text"
+                        className="input-field-with-icon"
+                        placeholder="e.g. John Doe"
+                        value={authUsername}
+                        onChange={(e) => setAuthUsername(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="auth-email-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                    Email Address
+                  </label>
+                  <div className="input-with-icon">
+                    <Mail className="input-icon" size={14} />
+                    <input
+                      id="auth-email-input"
+                      type="email"
+                      className="input-field-with-icon"
+                      placeholder="you@example.com"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="auth-pass-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                    Password
+                  </label>
+                  <div className="input-with-icon">
+                    <Lock className="input-icon" size={14} />
+                    <input
+                      id="auth-pass-input"
+                      type="password"
+                      className="input-field-with-icon"
+                      placeholder="••••••••"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {authMode === 'signup' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600 }}>
+                      Select Profile Color Theme
+                    </label>
+                    <div className="avatar-selector">
+                      {AVATARS.map(av => (
+                        <button
+                          key={av.id}
+                          type="button"
+                          className={`avatar-option ${selectedAvatar === av.value ? 'selected' : ''}`}
+                          style={{ background: av.value }}
+                          onClick={() => setSelectedAvatar(av.value)}
+                          aria-label={av.label}
+                          title={av.label}
+                        >
+                          {selectedAvatar === av.value && <Check size={14} color="#fff" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  id="auth-submit-btn"
+                  type="submit"
+                  className="btn-primary"
+                  style={{ width: '100%', marginTop: '12px' }}
+                >
+                  {authMode === 'login' ? 'Log In to Workspace' : 'Create Secure Account'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <form className="task-creator-form" onSubmit={handleVerifySubmit} style={{ marginTop: '16px' }}>
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                <Mail size={32} style={{ color: 'var(--color-primary)', alignSelf: 'center' }} />
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#fff' }}>Verify Your Email</h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  We sent a 4-digit verification code to <strong>{authEmail}</strong>. Enter it below to activate your profile.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="verify-code-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                  Verification PIN
+                </label>
+                <input
+                  id="verify-code-input"
+                  type="text"
+                  maxLength="4"
+                  className="input-field"
+                  placeholder="e.g. 1234"
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  style={{ textAlign: 'center', letterSpacing: '12px', fontSize: '20px', fontFamily: 'var(--font-mono)' }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                  onClick={() => setAuthMode('signup')}
+                >
+                  Back
+                </button>
+                <button
+                  id="verify-submit-btn"
+                  type="submit"
+                  className="btn-primary"
+                  style={{ flex: 2 }}
+                >
+                  Verify Code
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  // STANDARD LOGGED-IN VIEW RENDER
   return (
     <>
       {/* HEADER SECTION */}
@@ -538,6 +885,18 @@ Thank you for your flexibility,
           >
             <Settings size={18} />
           </button>
+
+          {/* USER ACCOUNT BADGE */}
+          <button
+            type="button"
+            className="user-profile-badge-btn"
+            style={{ background: currentUser.photoURL }}
+            onClick={() => setShowProfilePanel(!showProfilePanel)}
+            title="View User Profile"
+            aria-label="View Profile"
+          >
+            {currentUser.displayName ? currentUser.displayName[0].toUpperCase() : 'U'}
+          </button>
         </div>
       </header>
 
@@ -553,6 +912,13 @@ Thank you for your flexibility,
               <span className="spinner" style={{ borderColor: 'transparent', borderTopColor: 'var(--color-success)', width: '12px', height: '12px' }}></span>
               <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-success)' }}>
                 Backend Status: SECURE PROXY
+              </span>
+            </div>
+
+            <div style={{ background: isFirebaseConfigured ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255,255,255,0.02)', border: isFirebaseConfigured ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid var(--border-color)', padding: '10px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Shield size={14} style={{ color: isFirebaseConfigured ? 'var(--color-warning)' : 'var(--text-secondary)' }} />
+              <span style={{ fontSize: '12px', fontWeight: 600, color: isFirebaseConfigured ? 'var(--color-warning)' : 'var(--text-secondary)' }}>
+                Auth Type: {isFirebaseConfigured ? 'Firebase Production' : 'Mock Local Mode'}
               </span>
             </div>
 
@@ -589,6 +955,89 @@ Thank you for your flexibility,
               Done
             </button>
           </div>
+        </section>
+      )}
+
+      {/* USER PROFILE MODAL DRAWER */}
+      {showProfilePanel && (
+        <section className="settings-drawer" id="profile-drawer-panel" style={{ right: '24px', top: '80px', width: '340px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '14px' }}>
+            <div style={{ background: currentUser.photoURL, width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px', fontWeight: 700 }}>
+              {currentUser.displayName ? currentUser.displayName[0].toUpperCase() : 'U'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#fff', margin: 0 }}>{currentUser.displayName}</h2>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{currentUser.email}</span>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <label htmlFor="prof-username-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                Display Name
+              </label>
+              <input
+                id="prof-username-input"
+                type="text"
+                className="input-field"
+                value={tempUsername}
+                onChange={(e) => setTempUsername(e.target.value)}
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="prof-bio-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
+                Bio
+              </label>
+              <textarea
+                id="prof-bio-input"
+                className="email-textarea"
+                value={tempBio}
+                onChange={(e) => setTempBio(e.target.value)}
+                style={{ height: '60px' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600 }}>
+                Choose Profile Theme
+              </label>
+              <div className="avatar-selector">
+                {AVATARS.map(av => (
+                  <button
+                    key={av.id}
+                    type="button"
+                    className={`avatar-option ${tempAvatar === av.value ? 'selected' : ''}`}
+                    style={{ background: av.value }}
+                    onClick={() => setTempAvatar(av.value)}
+                    aria-label={av.label}
+                    title={av.label}
+                  >
+                    {tempAvatar === av.value && <Check size={14} color="#fff" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '14px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleLogout}
+                style={{ flex: 1, borderColor: 'var(--color-danger)', color: 'var(--color-danger)' }}
+              >
+                <LogOut size={13} /> Log Out
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                style={{ flex: 2 }}
+              >
+                Save Profile
+              </button>
+            </div>
+          </form>
         </section>
       )}
 
@@ -737,17 +1186,32 @@ Thank you for your flexibility,
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="task-deadline-hours" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Due In (hrs)</label>
-                  <input
-                    id="task-deadline-hours"
-                    type="number"
-                    step="0.5"
-                    min="0.5"
-                    className="input-field"
-                    value={deadlineHours}
-                    onChange={(e) => setDeadlineHours(e.target.value)}
-                    required
-                  />
+                  <label htmlFor="task-date-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Due Date</label>
+                  <div className="input-with-icon">
+                    <Calendar className="input-icon" size={14} />
+                    <input
+                      id="task-date-input"
+                      type="date"
+                      className="input-field-with-icon"
+                      value={taskDate}
+                      onChange={(e) => setTaskDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="task-time-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Due Time</label>
+                  <div className="input-with-icon">
+                    <Clock className="input-icon" size={14} />
+                    <input
+                      id="task-time-input"
+                      type="time"
+                      className="input-field-with-icon"
+                      value={taskTime}
+                      onChange={(e) => setTaskTime(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="task-est-hours" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Work Est (hrs)</label>
@@ -908,7 +1372,6 @@ Thank you for your flexibility,
               ) : (
                 tasks.map((t) => {
                   const deadlineDate = new Date(t.deadline);
-                  const activeTStress = t.id === selectedTaskId ? computedStress : t.stressScore;
                   
                   return (
                     <div
