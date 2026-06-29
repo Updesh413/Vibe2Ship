@@ -8,6 +8,16 @@ import {
   updateProfile as fbUpdateProfile,
   sendEmailVerification as fbSendEmailVerification
 } from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  getDocs,
+  query,
+  where,
+  deleteDoc
+} from 'firebase/firestore';
 
 // Vite environment configurations
 const firebaseConfig = {
@@ -28,12 +38,14 @@ export let isFirebaseConfigured =
 
 let firebaseApp = null;
 let firebaseAuth = null;
+let firebaseDb = null;
 
 if (isFirebaseConfigured) {
   try {
     firebaseApp = initializeApp(firebaseConfig);
     firebaseAuth = getAuth(firebaseApp);
-    console.log("🔥 Firebase initialized successfully (Secure Auth Mode).");
+    firebaseDb = getFirestore(firebaseApp);
+    console.log("🔥 Firebase Auth and Cloud Firestore initialized successfully.");
   } catch (error) {
     console.error("Failed to initialize real Firebase, switching to mock mode:", error);
     isFirebaseConfigured = false;
@@ -42,8 +54,9 @@ if (isFirebaseConfigured) {
   console.log("☁️ Running in Local Mock Auth Mode. Set VITE_FIREBASE_* keys in your .env to connect to real Firebase Auth.");
 }
 
-// Export auth client
+// Export auth and database clients
 export const auth = firebaseAuth;
+export const db = firebaseDb;
 
 // Mock database registry for client fallback
 const getLocalRegistry = () => JSON.parse(localStorage.getItem('v2s_users_db') || '[]');
@@ -52,17 +65,14 @@ const saveLocalRegistry = (registry) => localStorage.setItem('v2s_users_db', JSO
 // --- REAL OR MOCK WRAPPER INTERFACES ---
 export async function registerUser(email, password, username, avatarColor) {
   if (isFirebaseConfigured) {
-    // 1. Create user in Firebase Auth
     const userCredential = await fbCreateUser(auth, email, password);
     const user = userCredential.user;
     
-    // 2. Set username and avatar theme as photoURL
     await fbUpdateProfile(user, {
       displayName: username,
-      photoURL: avatarColor // Store avatar gradient value as photoURL
+      photoURL: avatarColor
     });
 
-    // 3. Send email verification
     try {
       await fbSendEmailVerification(user);
     } catch (e) {
@@ -77,7 +87,6 @@ export async function registerUser(email, password, username, avatarColor) {
       emailVerified: user.emailVerified
     };
   } else {
-    // Local storage mock register
     const registry = getLocalRegistry();
     if (registry.some(u => u.email === email)) {
       throw new Error("auth/email-already-in-use");
@@ -86,7 +95,7 @@ export async function registerUser(email, password, username, avatarColor) {
     const newUser = {
       uid: `mock-uid-${Date.now()}`,
       email,
-      password, // Mock storage only
+      password,
       displayName: username,
       photoURL: avatarColor,
       bio: "Productive Vibe2Ship user.",
@@ -111,7 +120,6 @@ export async function loginUser(email, password) {
       emailVerified: user.emailVerified
     };
   } else {
-    // Local storage mock login
     const registry = getLocalRegistry();
     const match = registry.find(u => u.email === email && u.password === password);
     if (!match) {
@@ -143,14 +151,12 @@ export function subscribeToAuthChanges(callback) {
       }
     });
   } else {
-    // Simulated auth sync
     const saved = localStorage.getItem('v2s_current_user');
     if (saved) {
       callback(JSON.parse(saved));
     } else {
       callback(null);
     }
-    // Return dummy unsubscribe
     return () => {};
   }
 }
@@ -160,8 +166,6 @@ export async function updateUserProfile(displayName, bio, photoURL, currentUser)
     const user = auth.currentUser;
     if (user) {
       await fbUpdateProfile(user, { displayName, photoURL });
-      // Note: Firebase Auth doesn't have custom metadata fields like 'bio' natively out of the box,
-      // so we can store user bio in localStorage or Firestore. For simplicity, we save user metadata locally.
       const localMeta = JSON.parse(localStorage.getItem(`v2s_user_metadata_${user.email}`) || '{}');
       localMeta.bio = bio;
       localStorage.setItem(`v2s_user_metadata_${user.email}`, JSON.stringify(localMeta));
@@ -177,7 +181,6 @@ export async function updateUserProfile(displayName, bio, photoURL, currentUser)
     }
     throw new Error("No active firebase user found.");
   } else {
-    // Mock profile updates
     const registry = getLocalRegistry();
     const updatedRegistry = registry.map(u => {
       if (u.email === currentUser.email) {
@@ -204,5 +207,65 @@ export async function sendFirebaseVerification() {
     if (user) {
       await fbSendEmailVerification(user);
     }
+  }
+}
+
+// --- FIRESTORE CLOUD DATABASE INTEGRATION METHODS ---
+
+/**
+ * Fetch tasks for the active user session
+ */
+export async function fetchTasks(userId, email) {
+  if (isFirebaseConfigured && db) {
+    try {
+      const q = query(collection(db, "tasks"), where("userId", "==", userId));
+      const querySnapshot = await getDocs(q);
+      const list = [];
+      querySnapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      return list;
+    } catch (error) {
+      console.error("Error fetching tasks from Firestore:", error);
+      throw error;
+    }
+  } else {
+    const saved = localStorage.getItem(`v2s_tasks_${email}`);
+    return saved ? JSON.parse(saved) : [];
+  }
+}
+
+/**
+ * Save or update a single task in Firestore
+ */
+export async function saveTask(userId, email, task) {
+  if (isFirebaseConfigured && db) {
+    try {
+      await setDoc(doc(db, "tasks", task.id), {
+        ...task,
+        userId
+      });
+    } catch (error) {
+      console.error("Error saving task to Firestore:", error);
+      throw error;
+    }
+  } else {
+    // Handled locally by App.jsx localStorage fallback hook
+  }
+}
+
+/**
+ * Delete a single task from Firestore
+ */
+export async function removeTask(userId, email, taskId) {
+  if (isFirebaseConfigured && db) {
+    try {
+      await deleteDoc(doc(db, "tasks", taskId));
+    } catch (error) {
+      console.error("Error deleting task from Firestore:", error);
+      throw error;
+    }
+  } else {
+    // Handled locally by App.jsx localStorage fallback hook
   }
 }

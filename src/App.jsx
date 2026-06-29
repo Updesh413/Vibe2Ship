@@ -28,7 +28,8 @@ import {
   LogOut,
   Camera,
   Check,
-  Award
+  Award,
+  ChevronDown
 } from 'lucide-react';
 import { generateSaveMePlan, askSaveMeAI, GEMINI_MODELS } from './gemini';
 import {
@@ -37,7 +38,10 @@ import {
   logoutUser,
   subscribeToAuthChanges,
   updateUserProfile,
-  isFirebaseConfigured
+  isFirebaseConfigured,
+  fetchTasks,
+  saveTask,
+  removeTask
 } from './firebase';
 
 // Gorgeous built-in avatar options
@@ -64,6 +68,39 @@ function App() {
   const [tempUsername, setTempUsername] = useState('');
   const [tempBio, setTempBio] = useState('');
   const [tempAvatar, setTempAvatar] = useState('');
+
+  // --- CUSTOM TOAST NOTIFICATION STATE ---
+  const [toast, setToast] = useState(null); // { message: '', type: 'success' | 'error' | 'info' }
+
+  // Auto-clear toast after 5 seconds
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  const triggerToast = (message, type = 'success') => {
+    setToast({ message, type });
+  };
+
+  // --- CUSTOM DELETE CONFIRMATION MODAL STATE ---
+  const [deleteConfirmTaskId, setDeleteConfirmTaskId] = useState(null);
+
+  // --- CUSTOM CATEGORY DROPDOWN STATE ---
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   // --- SETTINGS STATE ---
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('v2s_model') || 'gemini-2.5-flash');
@@ -220,7 +257,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Sync tasks when tasks change (isolated by user email)
+  // Sync tasks when tasks change (isolated by user email - Local Sync Only)
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem(`v2s_tasks_${currentUser.email}`, JSON.stringify(tasks));
@@ -230,62 +267,57 @@ function App() {
   // Load tasks when currentUser changes (Login / Logout / Switch)
   useEffect(() => {
     if (currentUser) {
-      const savedTasks = localStorage.getItem(`v2s_tasks_${currentUser.email}`);
-      if (savedTasks) {
-        try {
-          const parsed = JSON.parse(savedTasks);
-          setTasks(parsed);
-          if (parsed.length > 0) {
-            setSelectedTaskId(parsed[0].id);
-          } else {
-            setSelectedTaskId('');
-          }
-        } catch (e) {
-          console.error(e);
-          setTasks([]);
-          setSelectedTaskId('');
+      // Async database load from Firestore or local Namespace partition
+      fetchTasks(currentUser.uid, currentUser.email).then(list => {
+        if (list && list.length > 0) {
+          setTasks(list);
+          setSelectedTaskId(list[0].id);
+        } else {
+          // Load default tasks on initial account setup
+          const initialTasks = [
+            {
+              id: `task-demo-${currentUser.uid}`,
+              title: 'Draft VC Pitch Presentation',
+              category: 'Work',
+              priority: 'High',
+              deadline: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString(),
+              estHours: 3.5,
+              status: 'pending',
+              subtasks: [
+                {
+                  id: 'sub-1',
+                  title: 'Outline the narrative & structure (10-12 slides)',
+                  durationMinutes: 45,
+                  completed: false,
+                  helperPrompt: 'Draft an outline for a VC pitch deck for a startup building AI productivity companions.',
+                  snippet: 'Slide 1: Hook\nSlide 2: Problem\nSlide 3: Solution\nSlide 4: Market Size\nSlide 5: Architecture'
+                },
+                {
+                  id: 'sub-2',
+                  title: 'Write content for Problem and Solution slides',
+                  durationMinutes: 60,
+                  completed: false,
+                  helperPrompt: 'Write a compelling problem statement about deadline panic and procrastination.',
+                  snippet: 'PROBLEM:\n- Passives reminder apps are ignored.\n- Procrastination locks people out of beginning.'
+                }
+              ],
+              scopeCutRecommendations: [
+                "Skip custom slide transitions (saves 40 mins).",
+                "Minimize competitor slide slides (saves 20 mins)."
+              ],
+              extensionEmailDraft: `Subject: VC Presentation Prep Update\n\nHi Team,\n\nI'm polishing the pitch slides. To make sure the forecasting metrics are exact, I request an extra 12 hours.\n\nWarm regards,\n${currentUser.displayName}`,
+              stressScore: 50
+            }
+          ];
+          setTasks(initialTasks);
+          setSelectedTaskId(initialTasks[0].id);
+          saveTask(currentUser.uid, currentUser.email, initialTasks[0]);
         }
-      } else {
-        // Load default tasks on initial account setup
-        const initialTasks = [
-          {
-            id: `task-demo-${currentUser.uid}`,
-            title: 'Draft VC Pitch Presentation',
-            category: 'Work',
-            priority: 'High',
-            deadline: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString(),
-            estHours: 3.5,
-            status: 'pending',
-            subtasks: [
-              {
-                id: 'sub-1',
-                title: 'Outline the narrative & structure (10-12 slides)',
-                durationMinutes: 45,
-                completed: false,
-                helperPrompt: 'Draft an outline for a VC pitch deck for a startup building AI productivity companions.',
-                snippet: 'Slide 1: Hook\nSlide 2: Problem\nSlide 3: Solution\nSlide 4: Market Size\nSlide 5: Architecture'
-              },
-              {
-                id: 'sub-2',
-                title: 'Write content for Problem and Solution slides',
-                durationMinutes: 60,
-                completed: false,
-                helperPrompt: 'Write a compelling problem statement about deadline panic and procrastination.',
-                snippet: 'PROBLEM:\n- Passives reminder apps are ignored.\n- Procrastination locks people out of beginning.'
-              }
-            ],
-            scopeCutRecommendations: [
-              "Skip custom slide transitions (saves 40 mins).",
-              "Minimize competitor slide slides (saves 20 mins)."
-            ],
-            extensionEmailDraft: `Subject: VC Presentation Prep Update\n\nHi Team,\n\nI'm polishing the pitch slides. To make sure the forecasting metrics are exact, I request an extra 12 hours.\n\nWarm regards,\n${currentUser.displayName}`,
-            stressScore: 50
-          }
-        ];
-        setTasks(initialTasks);
-        setSelectedTaskId(initialTasks[0].id);
-      }
-      // Populate temp editing details
+      }).catch(err => {
+        console.error("Failed to load tasks from cloud:", err);
+        triggerToast("Failed to fetch cloud tasks: " + err.message, "error");
+      });
+
       setTempUsername(currentUser.displayName || '');
       setTempBio(currentUser.bio || 'Productive Vibe2Ship user.');
       setTempAvatar(currentUser.photoURL || AVATARS[0].value);
@@ -338,7 +370,7 @@ function App() {
             handleToggleSubtask(selectedTaskId, activeSubtaskIndex, true);
             setFocusIsRunning(false);
             clearInterval(timerRef.current);
-            alert(`Step complete! Good job, ${currentUser?.displayName}. Focus block completed.`);
+            triggerToast(`Step complete! Focus block completed. Good job!`, 'success');
             return 0;
           }
           return prev - 1;
@@ -377,9 +409,7 @@ function App() {
         } else {
           // Real Firebase automatically updates state via subscribeToAuthChanges
           setCurrentUser(user);
-          setChatMessages([
-            { sender: 'ai', text: `Welcome back, ${user.displayName}! Ready to beat some deadlines? Let's check your active focus plan.` }
-          ]);
+          triggerToast(`Welcome back, ${user.displayName}!`, 'success');
         }
       } catch (err) {
         console.error(err);
@@ -387,7 +417,7 @@ function App() {
         if (err.code === 'auth/invalid-credential' || err.message.includes('credential')) {
           errMsg = "Invalid email or password combination.";
         }
-        alert(errMsg);
+        triggerToast(errMsg, 'error');
       }
     } else if (authMode === 'signup') {
       try {
@@ -397,7 +427,7 @@ function App() {
           // Local storage mock verification step
           generateCodeAndVerify(user);
         } else {
-          alert(`🎉 Registration Successful!\n\nReal verification email sent to ${authEmail}.\n\nPlease click the activation link in your email and log in.`);
+          triggerToast(`🎉 Registration Successful! Email verification sent to ${authEmail}. Please activate.`, 'success');
           setAuthMode('login');
         }
       } catch (err) {
@@ -408,7 +438,7 @@ function App() {
         } else if (err.code === 'auth/weak-password') {
           errMsg = "Password is too weak. Must be at least 6 characters.";
         }
-        alert(errMsg);
+        triggerToast(errMsg, 'error');
       }
     }
   };
@@ -419,7 +449,7 @@ function App() {
     setAuthMode('verify');
     
     console.log(`[Vibe2Ship Verification] Mock Email to ${userObj.email}: Verification pin is: ${code}`);
-    alert(`✉️ [Local Demo: Verification Code Sent!]\nWe've sent a 4-digit activation PIN to your registered email.\n\n👉 Verification Code: ${code}`);
+    triggerToast(`✉️ [Verification PIN Sent] Code: ${code} (Check your PIN to activate)`, 'info');
   };
 
   const handleVerifySubmit = (e) => {
@@ -440,8 +470,9 @@ function App() {
       localStorage.setItem('v2s_current_user', JSON.stringify(verifiedUser));
       setAuthMode('login');
       setVerificationCode('');
+      triggerToast("Email verified successfully! Workspace activated.", 'success');
     } else {
-      alert("Incorrect verification code. Please check console or try resending.");
+      triggerToast("Incorrect verification code. Please check your PIN.", 'error');
     }
   };
 
@@ -457,6 +488,7 @@ function App() {
     setAuthPassword('');
     setAuthUsername('');
     setShowProfilePanel(false);
+    triggerToast("Logged out successfully.", 'info');
   };
 
   // Profile Customization Save
@@ -468,10 +500,10 @@ function App() {
       const updatedUser = await updateUserProfile(tempUsername, tempBio, tempAvatar, currentUser);
       setCurrentUser(updatedUser);
       setShowProfilePanel(false);
-      alert("Profile details updated successfully!");
+      triggerToast("Profile details updated successfully!", 'success');
     } catch (err) {
       console.error(err);
-      alert("Failed to update profile details: " + err.message);
+      triggerToast("Failed to update profile: " + err.message, 'error');
     }
   };
 
@@ -479,7 +511,7 @@ function App() {
   // Create Plan Action
   const handleCreateTask = async (e) => {
     e.preventDefault();
-    if (!taskTitle.trim()) return;
+    if (!taskTitle.trim() || !currentUser) return;
 
     setLoadingPlan(true);
     const newTaskId = `task-${Date.now()}`;
@@ -504,6 +536,7 @@ function App() {
     setTasks(prev => [skeletonTask, ...prev]);
     setSelectedTaskId(newTaskId);
     setActiveSubtaskIndex(0);
+    saveTask(currentUser.uid, currentUser.email, skeletonTask);
 
     try {
       const result = await generateSaveMePlan(
@@ -515,7 +548,7 @@ function App() {
 
       setTasks(prev => prev.map(t => {
         if (t.id === newTaskId) {
-          return {
+          const updatedTask = {
             ...t,
             subtasks: result.subtasks.map((sub, idx) => ({
               id: `sub-${newTaskId}-${idx}`,
@@ -528,6 +561,8 @@ function App() {
             scopeCutRecommendations: result.scopeCutRecommendations || [],
             extensionEmailDraft: result.extensionEmailDraft || ""
           };
+          saveTask(currentUser.uid, currentUser.email, updatedTask);
+          return updatedTask;
         }
         return t;
       }));
@@ -540,6 +575,7 @@ function App() {
       setTaskTitle('');
     } catch (err) {
       console.error(err);
+      triggerToast("AI planner experienced an issue compiling steps. Default skeleton was kept.", "error");
     } finally {
       setLoadingPlan(false);
     }
@@ -547,32 +583,44 @@ function App() {
 
   // Toggle Subtask Completion
   const handleToggleSubtask = (taskId, subtaskIdx, forceValue = null) => {
+    if (!currentUser) return;
     setTasks(prev => prev.map(t => {
       if (t.id === taskId) {
         const newSubtasks = [...t.subtasks];
         const val = forceValue !== null ? forceValue : !newSubtasks[subtaskIdx].completed;
         newSubtasks[subtaskIdx] = { ...newSubtasks[subtaskIdx], completed: val };
-        return { ...t, subtasks: newSubtasks };
+        
+        const updatedTask = { ...t, subtasks: newSubtasks };
+        saveTask(currentUser.uid, currentUser.email, updatedTask);
+        return updatedTask;
       }
       return t;
     }));
   };
 
-  // Delete Task Action
+  // Trigger Custom Confirmation Modal
   const handleDeleteTask = (taskId, e) => {
     e.stopPropagation();
-    if (confirm("Delete this task focus?")) {
-      setTasks(prev => prev.filter(t => t.id !== taskId));
-      if (selectedTaskId === taskId) {
-        setSelectedTaskId(tasks[0]?.id || null);
-        setActiveSubtaskIndex(0);
-      }
+    setDeleteConfirmTaskId(taskId);
+  };
+
+  // Confirm and Execute Task Deletion
+  const confirmDeleteTask = (taskId) => {
+    if (!currentUser) return;
+    setTasks(prev => prev.filter(t => t.id !== taskId));
+    removeTask(currentUser.uid, currentUser.email, taskId);
+    if (selectedTaskId === taskId) {
+      const remaining = tasks.filter(t => t.id !== taskId);
+      setSelectedTaskId(remaining[0]?.id || '');
+      setActiveSubtaskIndex(0);
     }
+    setDeleteConfirmTaskId(null);
+    triggerToast("Task focus deleted.", "info");
   };
 
   // Triage Scope Action (Reduce durations by 30%)
   const handleTriageScope = () => {
-    if (!activeTask) return;
+    if (!activeTask || !currentUser) return;
     
     setTasks(prev => prev.map(t => {
       if (t.id === selectedTaskId) {
@@ -584,11 +632,13 @@ function App() {
         });
 
         const sumRemainingMinutes = updatedSubs.filter(s => !s.completed).reduce((sum, s) => sum + s.durationMinutes, 0);
-        return {
+        const updatedTask = {
           ...t,
           subtasks: updatedSubs,
           estHours: parseFloat((sumRemainingMinutes / 60).toFixed(1))
         };
+        saveTask(currentUser.uid, currentUser.email, updatedTask);
+        return updatedTask;
       }
       return t;
     }));
@@ -597,6 +647,7 @@ function App() {
       ...prev,
       { sender: 'ai', text: "⚡ Scope Triaged! I've compressed your remaining subtask durations by 30% by cutting secondary tasks. Work fast, stay focused, and let's get the core features completed!" }
     ]);
+    triggerToast("Scope Triaged! Time limits compressed.", "success");
   };
 
   // Copy helpers
@@ -850,6 +901,19 @@ function App() {
             </form>
           )}
         </section>
+
+        {/* Custom Floating Toast Notification */}
+        {toast && (
+          <div className={`toast-notification toast-${toast.type}`} id="toast-notification-id">
+            <div className="toast-content">
+              {toast.type === 'success' && <CheckCircle2 size={16} />}
+              {toast.type === 'error' && <AlertTriangle size={16} />}
+              {toast.type === 'info' && <Info size={16} />}
+              <span>{toast.message}</span>
+            </div>
+            <button type="button" className="toast-close-btn" onClick={() => setToast(null)}>×</button>
+          </div>
+        )}
       </main>
     );
   }
@@ -875,17 +939,6 @@ function App() {
             <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           </div>
 
-          <button
-            id="settings-toggle-btn"
-            type="button"
-            className="settings-btn"
-            onClick={() => setShowSettings(!showSettings)}
-            aria-label="System Settings"
-            title="Configure System Settings"
-          >
-            <Settings size={18} />
-          </button>
-
           {/* USER ACCOUNT BADGE */}
           <button
             type="button"
@@ -899,64 +952,6 @@ function App() {
           </button>
         </div>
       </header>
-
-      {/* SECURE SETTINGS DRAWER OVERLAY */}
-      {showSettings && (
-        <section className="settings-drawer" id="settings-drawer-panel">
-          <h2 className="panel-title" style={{ fontSize: '15px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
-            <Shield size={14} style={{ color: 'var(--color-success)' }} /> System Settings
-          </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
-            
-            <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '10px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span className="spinner" style={{ borderColor: 'transparent', borderTopColor: 'var(--color-success)', width: '12px', height: '12px' }}></span>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-success)' }}>
-                Backend Status: SECURE PROXY
-              </span>
-            </div>
-
-            <div style={{ background: isFirebaseConfigured ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255,255,255,0.02)', border: isFirebaseConfigured ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid var(--border-color)', padding: '10px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Shield size={14} style={{ color: isFirebaseConfigured ? 'var(--color-warning)' : 'var(--text-secondary)' }} />
-              <span style={{ fontSize: '12px', fontWeight: 600, color: isFirebaseConfigured ? 'var(--color-warning)' : 'var(--text-secondary)' }}>
-                Auth Type: {isFirebaseConfigured ? 'Firebase Production' : 'Mock Local Mode'}
-              </span>
-            </div>
-
-            <div>
-              <label htmlFor="model-select-id" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', fontWeight: 600 }}>
-                Gemini Model Selection
-              </label>
-              <select
-                id="model-select-id"
-                className="select-field"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                style={{ fontSize: '12px', padding: '8px' }}
-              >
-                {GEMINI_MODELS.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            </div>
-            
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', marginTop: '4px' }}>
-              <Shield size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0, marginTop: '2px' }} />
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                <strong>Access Isolated:</strong> API keys are securely loaded on the node server via <code>.env</code>. The client browser has no direct access to credentials, preventing leakage on deployment.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setShowSettings(false)}
-              style={{ padding: '6px 0', width: '100%', justifyContent: 'center', marginTop: '4px' }}
-            >
-              Done
-            </button>
-          </div>
-        </section>
-      )}
 
       {/* USER PROFILE MODAL DRAWER */}
       {showProfilePanel && (
@@ -1171,19 +1166,38 @@ function App() {
                 required
               />
               <div className="form-row">
-                <div>
-                  <label htmlFor="task-cat-select" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Category</label>
-                  <select
-                    id="task-cat-select"
-                    className="select-field"
-                    value={taskCategory}
-                    onChange={(e) => setTaskCategory(e.target.value)}
-                  >
-                    <option value="Work">Work</option>
-                    <option value="Study">Study</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Side Hustle">Side Hustle</option>
-                  </select>
+                {/* CUSTOM PREMIUM DROPDOWN */}
+                <div ref={dropdownRef} style={{ position: 'relative' }}>
+                  <label htmlFor="task-cat-select-btn" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Category</label>
+                  <div className="custom-dropdown-container">
+                    <button
+                      id="task-cat-select-btn"
+                      type="button"
+                      className="custom-dropdown-trigger"
+                      onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
+                    >
+                      <span>{taskCategory}</span>
+                      <ChevronDown size={14} className="dropdown-arrow" />
+                    </button>
+                    
+                    {categoryDropdownOpen && (
+                      <div className="custom-dropdown-menu">
+                        {['Work', 'Study', 'Personal', 'Side Hustle'].map(cat => (
+                          <button
+                            key={cat}
+                            type="button"
+                            className={`custom-dropdown-item ${taskCategory === cat ? 'active' : ''}`}
+                            onClick={() => {
+                              setTaskCategory(cat);
+                              setCategoryDropdownOpen(false);
+                            }}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="task-date-input" style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Due Date</label>
@@ -1640,6 +1654,51 @@ function App() {
           </section>
         )}
       </main>
+
+      {/* Custom Confirmation Modal */}
+      {deleteConfirmTaskId && (
+        <div className="modal-backdrop" id="delete-modal-backdrop-id">
+          <div className="modal-card">
+            <div className="modal-header">
+              <AlertTriangle size={20} style={{ color: 'var(--color-danger)' }} />
+              <h3 className="modal-title">Delete Task Focus?</h3>
+            </div>
+            <p className="modal-message">
+              Are you sure you want to delete this task? This will permanently remove the timeline steps, execution guides, and recovery resources. This action cannot be undone.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDeleteConfirmTaskId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
+                onClick={() => confirmDeleteTask(deleteConfirmTaskId)}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Floating Toast Notification */}
+      {toast && (
+        <div className={`toast-notification toast-${toast.type}`} id="toast-notification-id">
+          <div className="toast-content">
+            {toast.type === 'success' && <CheckCircle2 size={16} />}
+            {toast.type === 'error' && <AlertTriangle size={16} />}
+            {toast.type === 'info' && <Info size={16} />}
+            <span>{toast.message}</span>
+          </div>
+          <button type="button" className="toast-close-btn" onClick={() => setToast(null)}>×</button>
+        </div>
+      )}
     </>
   );
 }

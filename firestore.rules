@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Secure access control rules for the 'tasks' collection
+    match /tasks/{taskId} {
+      
+      // Allow reading and deleting only if authenticated and the stored task belongs to the user
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      
+      // Allow creation only if authenticated and the new task's owner matches the user's UID
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      
+      // Allow updating only if authenticated, the task belongs to the user, and they aren't changing ownership
+      allow update: if request.auth != null && 
+                       resource.data.userId == request.auth.uid && 
+                       request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Deny read/write access to all other collections by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
