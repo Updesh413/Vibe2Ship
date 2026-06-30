@@ -1,109 +1,69 @@
-# Deploying Vibe2Ship to Google Cloud Run 🚀
+# Secure Deploy of Vibe2Ship to Google Cloud Run 🚀
 
-This guide provides instructions for deploying the containerized Vibe2Ship application to **Google Cloud Run** using the **Google Cloud SDK (`gcloud` CLI)** or **Google Cloud Shell** (no local installation required).
+This guide provides instructions for deploying the containerized Vibe2Ship application to **Google Cloud Run** using a local build strategy. This ensures that **no API keys or private credentials** are hardcoded in your `Dockerfile` or source code repository.
+
+---
+
+## Deployment Strategy: Local Build (Secure & Fast)
+
+Instead of compiling your React frontend inside the Google Cloud container (which requires exposing public Firebase keys during container builds), we compile the frontend locally where it automatically reads your private `.env` file. 
+
+Then, the Docker container simply packages the compiled `dist/` directory and your `server.js` file, ensuring complete secrecy of all API keys.
 
 ---
 
 ## Prerequisites & Setup
 
-Choose one of the following methods to run the deployment commands:
-
-### Option A: Using Google Cloud Shell (No Setup Required - Recommended)
-1. Open the [Google Cloud Console](https://console.cloud.google.com/).
-2. In the top right corner, click the **Activate Cloud Shell** button `[>_]`.
-3. Clone your repository into Cloud Shell, navigate to the project folder, and continue with the deployment commands below.
-
-### Option B: Using Local `gcloud` CLI
-1. Install the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install).
-2. Open your terminal (e.g. PowerShell) and log in:
-   ```bash
+### Step 1: Login & Configure GCP Project
+Open your terminal (e.g. Command Prompt or PowerShell) and run:
+1. Log in to your Google Cloud account:
+   ```cmd
    gcloud auth login
    ```
-3. Set your active Google Cloud project:
-   ```bash
+2. Set your active Google Cloud project:
+   ```cmd
    gcloud config set project vibe2ship-8914a
    ```
-   *(Replace `vibe2ship-8914a` with your actual Google Cloud Project ID if different)*
 
 ---
 
-## Deployment Step 1: Deploying with Cloud Build & Cloud Run
+## Step 2: Compile & Deploy
 
-Google Cloud Run allows you to build your container image directly on Google Cloud using Cloud Build and deploy it in a single command. 
+Run the following commands from the root directory of your project:
 
-Run the following command from the root of the project. 
-
-### Single-Line Command (Recommended - Works in all terminals):
-```bash
-gcloud run deploy vibe2ship --source . --region us-central1 --allow-unauthenticated --set-env-vars="GEMINI_API_KEY=AIzaSyDDvtviYSXSGodZDIdTEAvcrXTN2-K_ji0" --set-build-env-vars="VITE_FIREBASE_API_KEY=AIzaSyDQyx2HdTIdJLCZVmYwEL_m5jnS3l2VoyA,VITE_FIREBASE_AUTH_DOMAIN=vibe2ship-8914a.firebaseapp.com,VITE_FIREBASE_PROJECT_ID=vibe2ship-8914a,VITE_FIREBASE_STORAGE_BUCKET=vibe2ship-8914a.firebasestorage.app,VITE_FIREBASE_MESSAGING_SENDER_ID=1038395846432,VITE_FIREBASE_APP_ID=1:1038395846432:web:b41cc891379fd23db33145"
+### 1. Build the frontend locally
+This reads your local `.env` and compiles the production assets into `dist/`:
+```cmd
+npm run build
 ```
 
-### Multi-Line Command formatting (depending on your shell):
-* **Windows Command Prompt (CMD)** (uses `^`):
-  ```cmd
-  gcloud run deploy vibe2ship ^
-    --source . ^
-    --region us-central1 ^
-    --allow-unauthenticated ^
-    --set-env-vars="GEMINI_API_KEY=AIzaSyDDvtviYSXSGodZDIdTEAvcrXTN2-K_ji0" ^
-    --set-build-env-vars="VITE_FIREBASE_API_KEY=AIzaSyDQyx2HdTIdJLCZVmYwEL_m5jnS3l2VoyA,VITE_FIREBASE_AUTH_DOMAIN=vibe2ship-8914a.firebaseapp.com,VITE_FIREBASE_PROJECT_ID=vibe2ship-8914a,VITE_FIREBASE_STORAGE_BUCKET=vibe2ship-8914a.firebasestorage.app,VITE_FIREBASE_MESSAGING_SENDER_ID=1038395846432,VITE_FIREBASE_APP_ID=1:1038395846432:web:b41cc891379fd23db33145"
-  ```
-* **PowerShell** (uses backtick `` ` ``):
-  ```powershell
-  gcloud run deploy vibe2ship `
-    --source . `
-    --region us-central1 `
-    --allow-unauthenticated `
-    --set-env-vars="GEMINI_API_KEY=AIzaSyDDvtviYSXSGodZDIdTEAvcrXTN2-K_ji0" `
-    --set-build-env-vars="VITE_FIREBASE_API_KEY=AIzaSyDQyx2HdTIdJLCZVmYwEL_m5jnS3l2VoyA,VITE_FIREBASE_AUTH_DOMAIN=vibe2ship-8914a.firebaseapp.com,VITE_FIREBASE_PROJECT_ID=vibe2ship-8914a,VITE_FIREBASE_STORAGE_BUCKET=vibe2ship-8914a.firebasestorage.app,VITE_FIREBASE_MESSAGING_SENDER_ID=1038395846432,VITE_FIREBASE_APP_ID=1:1038395846432:web:b41cc891379fd23db33145"
-  ```
-* **Bash / macOS / Linux / Cloud Shell** (uses backslash `\`):
-  ```bash
-  gcloud run deploy vibe2ship \
-    --source . \
-    --region us-central1 \
-    --allow-unauthenticated \
-    --set-env-vars="GEMINI_API_KEY=AIzaSyDDvtviYSXSGodZDIdTEAvcrXTN2-K_ji0" \
-    --set-build-env-vars="VITE_FIREBASE_API_KEY=AIzaSyDQyx2HdTIdJLCZVmYwEL_m5jnS3l2VoyA,VITE_FIREBASE_AUTH_DOMAIN=vibe2ship-8914a.firebaseapp.com,VITE_FIREBASE_PROJECT_ID=vibe2ship-8914a,VITE_FIREBASE_STORAGE_BUCKET=vibe2ship-8914a.firebasestorage.app,VITE_FIREBASE_MESSAGING_SENDER_ID=1038395846432,VITE_FIREBASE_APP_ID=1:1038395846432:web:b41cc891379fd23db33145"
-  ```
+### 2. Deploy to Cloud Run
+Deploy the application, passing only your private `GEMINI_API_KEY` as a runtime environment variable. 
 
-### What this command does:
-1. **`--source .`**: Tells Cloud Build to package the current directory and build the Docker image in the cloud using the local `Dockerfile`.
-2. **`--set-env-vars`**: Sets the runtime Express server variables (in this case, your `GEMINI_API_KEY`).
-3. **`--set-build-env-vars`**: Passes your Firebase configuration variables as build arguments. Vite uses these during compilation (`npm run build`) to generate the static files in the `/dist` folder.
-4. **`--allow-unauthenticated`**: Makes the service publicly accessible on the internet.
+*Replace `[YOUR_GEMINI_API_KEY]` with your actual Gemini API key:*
 
----
-
-## Deployment Step 2: Set Firestore Security Rules (If not done)
-
-Make sure you deploy your firestore security rules configurations so the database behaves correctly:
-
-```bash
-npx firebase-tools deploy --only firestore:rules --project vibe2ship-8914a
+```cmd
+gcloud run deploy vibe2ship --source . --region us-central1 --allow-unauthenticated --set-env-vars="GEMINI_API_KEY=[YOUR_GEMINI_API_KEY]"
 ```
+
+*Note: Since the frontend was compiled locally, all Firebase configuration keys are already securely baked into the compiled `dist/` assets, so you don't need to specify any build environment variables!*
 
 ---
 
 ## Troubleshooting & Verification
 
 ### Local Docker Testing
-If you have Docker running locally, you can verify the build configuration prior to deploying:
-
-1. **Build the container** with your Firebase build args:
-   ```bash
-   docker build `
-     --build-arg VITE_FIREBASE_API_KEY="AIzaSyDQyx2HdTIdJLCZVmYwEL_m5jnS3l2VoyA" `
-     --build-arg VITE_FIREBASE_AUTH_DOMAIN="vibe2ship-8914a.firebaseapp.com" `
-     --build-arg VITE_FIREBASE_PROJECT_ID="vibe2ship-8914a" `
-     --build-arg VITE_FIREBASE_STORAGE_BUCKET="vibe2ship-8914a.firebasestorage.app" `
-     --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID="1038395846432" `
-     --build-arg VITE_FIREBASE_APP_ID="1:1038395846432:web:b41cc891379fd23db33145" `
-     -t vibe2ship .
+If you want to verify the Docker image locally before deploying:
+1. Compile your frontend:
+   ```cmd
+   npm run build
    ```
-
-2. **Run the container** locally to verify:
-   ```bash
-   docker run -p 8080:8080 -e GEMINI_API_KEY="AIzaSyDDvtviYSXSGodZDIdTEAvcrXTN2-K_ji0" vibe2ship
+2. Build the Docker container:
+   ```cmd
+   docker build -t vibe2ship .
    ```
-   Open `http://localhost:8080` in your web browser.
+3. Run the container locally (replace `[YOUR_GEMINI_API_KEY]` with your key):
+   ```cmd
+   docker run -p 8080:8080 -e GEMINI_API_KEY="[YOUR_GEMINI_API_KEY]" vibe2ship
+   ```
+   Open `http://localhost:8080` in your web browser to test.
