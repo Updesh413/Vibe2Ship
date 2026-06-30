@@ -41,7 +41,9 @@ import {
   isFirebaseConfigured,
   fetchTasks,
   saveTask,
-  removeTask
+  removeTask,
+  reloadCurrentUser,
+  sendFirebaseVerification
 } from './firebase';
 
 // Gorgeous built-in avatar options
@@ -476,6 +478,33 @@ function App() {
     }
   };
 
+  const handleCheckVerification = async () => {
+    try {
+      const updatedUser = await reloadCurrentUser();
+      if (updatedUser) {
+        if (updatedUser.emailVerified) {
+          setCurrentUser(updatedUser);
+          triggerToast("Email verified successfully! Workspace activated.", 'success');
+        } else {
+          triggerToast("Email is not verified yet. Please check your inbox or spam folder.", 'info');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Error checking verification status: " + err.message, 'error');
+    }
+  };
+
+  const handleResendVerification = async () => {
+    try {
+      await sendFirebaseVerification();
+      triggerToast("Verification email resent. Please check your inbox/spam folder.", 'success');
+    } catch (err) {
+      console.error(err);
+      triggerToast("Failed to resend verification email: " + err.message, 'error');
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logoutUser();
@@ -900,6 +929,91 @@ function App() {
               </div>
             </form>
           )}
+        </section>
+
+        {/* Custom Floating Toast Notification */}
+        {toast && (
+          <div className={`toast-notification toast-${toast.type}`} id="toast-notification-id">
+            <div className="toast-content">
+              {toast.type === 'success' && <CheckCircle2 size={16} />}
+              {toast.type === 'error' && <AlertTriangle size={16} />}
+              {toast.type === 'info' && <Info size={16} />}
+              <span>{toast.message}</span>
+            </div>
+            <button type="button" className="toast-close-btn" onClick={() => setToast(null)}>×</button>
+          </div>
+        )}
+      </main>
+    );
+  }
+
+  // IF FIREBASE IS CONFIGURED AND USER IS LOGGED IN BUT EMAIL IS NOT VERIFIED
+  if (isFirebaseConfigured && currentUser && !currentUser.emailVerified) {
+    return (
+      <main style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: '80vh', padding: '20px' }}>
+        <section className="auth-card" id="email-verification-pending-container" style={{ textAlign: 'center', maxWidth: '420px' }}>
+          <div className="brand-section" style={{ justifyContent: 'center', marginBottom: '24px' }}>
+            <div className="logo-icon">
+              <Mail size={20} style={{ color: '#8b5cf6' }} />
+            </div>
+            <div>
+              <h1 className="brand-name" style={{ fontSize: '24px', margin: 0 }}>Vibe2Ship</h1>
+              <div className="tagline">Verify Your Email</div>
+            </div>
+          </div>
+          
+          <div style={{ marginTop: '20px', marginBottom: '24px', color: '#fff', fontSize: '14px', lineHeight: '1.6' }}>
+            <p>We sent a verification link to <strong>{currentUser.email}</strong>.</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '10px' }}>
+              Please click the link in that email to activate your workspace. 
+              <br />
+              <strong style={{ color: '#f59e0b' }}>Important:</strong> If you don't see it, please check your <strong>Spam or Junk email</strong> folder.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button 
+              type="button" 
+              className="btn-primary" 
+              onClick={handleCheckVerification}
+              style={{ width: '100%', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            >
+              <CheckCircle2 size={16} />
+              I Have Verified My Email
+            </button>
+            
+            <button 
+              type="button" 
+              className="btn-secondary" 
+              onClick={handleResendVerification}
+              style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#fff' }}
+            >
+              <RefreshCw size={14} />
+              Resend Verification Email
+            </button>
+            
+            <button 
+              type="button" 
+              onClick={handleLogout}
+              style={{ 
+                width: '100%', 
+                padding: '10px', 
+                background: 'rgba(244, 63, 94, 0.1)', 
+                border: '1px solid rgba(244, 63, 94, 0.2)', 
+                color: '#f43f5e', 
+                borderRadius: '8px',
+                cursor: 'pointer',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                gap: '8px',
+                fontWeight: 600
+              }}
+            >
+              <LogOut size={14} />
+              Log Out / Back
+            </button>
+          </div>
         </section>
 
         {/* Custom Floating Toast Notification */}

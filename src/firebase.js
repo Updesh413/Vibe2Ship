@@ -6,7 +6,8 @@ import {
   signOut as fbSignOut,
   onAuthStateChanged as fbOnAuthStateChanged,
   updateProfile as fbUpdateProfile,
-  sendEmailVerification as fbSendEmailVerification
+  sendEmailVerification as fbSendEmailVerification,
+  reload as fbReload
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -208,6 +209,21 @@ export async function sendFirebaseVerification() {
       await fbSendEmailVerification(user);
     }
   }
+}
+
+export async function reloadCurrentUser() {
+  if (isFirebaseConfigured && auth.currentUser) {
+    await fbReload(auth.currentUser);
+    const user = auth.currentUser;
+    return {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName || user.email.split('@')[0],
+      photoURL: user.photoURL || 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+      emailVerified: user.emailVerified
+    };
+  }
+  return null;
 }
 
 // --- FIRESTORE CLOUD DATABASE INTEGRATION METHODS ---
